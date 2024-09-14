@@ -29,17 +29,31 @@ $conn = connectWithRetry($servername, $username, $password, $dbname);
 
 // Check if the connection was successful
 if (!$conn) {
-    die('Connection error: Unable to connect to the database after multiple attempts.');
+    error_log('Connection error: Unable to connect to the database after multiple attempts.');
+    die('An error occurred. Please try again later.');
+}
+
+// CSRF Token generation and validation
+session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+function validateCSRFToken($token) {
+    return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
 }
 
 // Check if a delete request was made
 if (isset($_GET['delete'])) {
-    $sno = $_GET['delete'];
-    // SQL query to delete the note with the specified sno
-    $sql = "DELETE FROM `notes` WHERE `notes`.`sno` = $sno;";
-    $result = mysqli_query($conn, $sql);
+    $sno = filter_input(INPUT_GET, 'delete', FILTER_VALIDATE_INT);
+    if ($sno === false || $sno === null) {
+        die('Invalid input');
+    }
+    
+    $stmt = mysqli_prepare($conn, "DELETE FROM `notes` WHERE `notes`.`sno` = ?");
+    mysqli_stmt_bind_param($stmt, "i", $sno);
+    $result = mysqli_stmt_execute($stmt);
 
-    // If the delete operation was successful, set the $delete flag to true
     if ($result) {
         $delete = true;
     }
@@ -47,38 +61,46 @@ if (isset($_GET['delete'])) {
 
 // Check if a POST request was made
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    if (!validateCSRFToken($_POST['csrf_token'])) {
+        die('CSRF token validation failed');
+    }
+
     // Check if the request is for updating an existing note
     if (isset($_POST['snoEdit'])) {
-        $sno = $_POST['snoEdit'];
-        $title = $_POST['titleEdit'];
-        $description = $_POST['descriptionEdit'];
+        $sno = filter_input(INPUT_POST, 'snoEdit', FILTER_VALIDATE_INT);
+        $title = filter_input(INPUT_POST, 'titleEdit', FILTER_SANITIZE_STRING);
+        $description = filter_input(INPUT_POST, 'descriptionEdit', FILTER_SANITIZE_STRING);
+        $fingerprint = filter_input(INPUT_POST, 'fingerprint', FILTER_SANITIZE_STRING);
 
-        // Retrieve the fingerprint from the POST request
-        $fingerprint = $_POST['fingerprint'];
+        if ($sno === false || $sno === null || $title === false || $description === false || $fingerprint === false) {
+            die('Invalid input');
+        }
 
-        // SQL query to update the note with the specified sno
         $sql = "UPDATE `notes` SET `title` = ?, `description` = ?, `fingerprint` = ? WHERE `notes`.`sno` = ?";
         $stmt = mysqli_prepare($conn, $sql);
         mysqli_stmt_bind_param($stmt, "sssi", $title, $description, $fingerprint, $sno);
         $result = mysqli_stmt_execute($stmt);
 
-        // If the update operation was successful, set the $update flag to true
         if ($result) {
             $update = true;
         }
     } else {
         // Insert a new note
-        $title = $_POST["title"];
-        $description = $_POST["description"];
-        $fingerprint = $_POST["fingerprint"];
-        $currentDate = date('Y-m-d H:i:s'); // Get current date and time
+        $title = filter_input(INPUT_POST, 'title', FILTER_SANITIZE_STRING);
+        $description = filter_input(INPUT_POST, 'description', FILTER_SANITIZE_STRING);
+        $fingerprint = filter_input(INPUT_POST, 'fingerprint', FILTER_SANITIZE_STRING);
+
+        if ($title === false || $description === false || $fingerprint === false) {
+            die('Invalid input');
+        }
+
+        $currentDate = date('Y-m-d H:i:s');
 
         $sql = "INSERT INTO `notes` (`title`, `description`, `fingerprint`, `date`) VALUES (?, ?, ?, ?)";
         $stmt = mysqli_prepare($conn, $sql);
         mysqli_stmt_bind_param($stmt, "ssss", $title, $description, $fingerprint, $currentDate);
         $result = mysqli_stmt_execute($stmt);
 
-        // If the insert operation was successful, set the $insert flag to true
         if ($result) {
             $insert = true;
         }
@@ -109,9 +131,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 </div>
                 <div class="modal-body">
                     <form action="./index.php" method="post">
-                        <!-- Hidden input to store the sno of the note being edited -->
+                        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                         <input type="hidden" name="snoEdit" id="snoEdit">
-                        <!-- Hidden input to store the fingerprint -->
                         <input type="hidden" name="fingerprint" id="fingerprint">
                         <div class="mb-3">
                             <label for="title">Edit Title</label>
@@ -183,7 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <!-- Form to add a new note -->
     <div class="container mt-5 my-4 mb-5">
         <form action="./index.php" method="post">
-            <!-- Hidden input to store the fingerprint -->
+            <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
             <input type="hidden" name="fingerprint" id="fingerprint-add">
             <div class="mb-3">
                 <h2>Add a Note</h2>
@@ -210,16 +231,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <tbody>
                 <?php
                 // Fetch notes from the database
-                $sql = "SELECT * FROM `notes`";
-                $result = mysqli_query($conn, $sql);
+                $stmt = mysqli_prepare($conn, "SELECT * FROM `notes`");
+                mysqli_stmt_execute($stmt);
+                $result = mysqli_stmt_get_result($stmt);
                 $i = 0;
                 while ($row = mysqli_fetch_assoc($result)) {
                     $i += 1;
                     echo "
                     <tr>
                     <th scope='row'>" . $i . "</th>
-                    <td>" . $row['title'] . "</td>
-                    <td>" . $row['description'] . "</td>
+                    <td>" . htmlspecialchars($row['title'], ENT_QUOTES, 'UTF-8') . "</td>
+                    <td>" . htmlspecialchars($row['description'], ENT_QUOTES, 'UTF-8') . "</td>
                     <td>
                         <button class='edit btn btn-sm btn-primary' id=" . $row['sno'] . ">Edit</button> 
                         <button class='delete btn btn-sm btn-primary mt-1' data-sno='" . $row['sno'] . "'>Delete</button>
@@ -232,25 +254,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         </table>
     </div>
 
-    <!-- jQuery -->
+    <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.7.1.js" integrity="sha256-eKhayi8LEQwp4NKxN+CfCh+3qOVUtJn3QNZ0TciWLP4=" crossorigin="anonymous"></script>
-    <!-- DataTables JS -->
     <script src="//cdn.datatables.net/2.0.8/js/dataTables.min.js"></script>
-    <!-- Initialize DataTables -->
     <script>
         let table = new DataTable('#myTable');
     </script>
-    <!-- JavaScript for handling Edit and Delete actions -->
-    <script src="assets/js/script.min.js"></script> <!-- Use the minified JS file -->
-    <!-- Include FingerprintJS -->
+    <script src="assets/js/script.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@3/dist/fp.min.js"></script>
-    <!-- Bootstrap Bundle JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eHz" crossorigin="anonymous"></script>
     <script>
         // Initialize FingerprintJS
         FingerprintJS.load().then(fp => {
             fp.get().then(result => {
-                // Set the fingerprint value in the hidden input fields
                 document.getElementById('fingerprint').value = result.visitorId;
                 document.getElementById('fingerprint-add').value = result.visitorId;
             });
@@ -267,7 +283,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 document.getElementById('titleEdit').value = title;
                 document.getElementById('descEdit').value = description;
 
-                // Show the modal
                 new bootstrap.Modal(document.getElementById('editModel')).show();
             });
         });
