@@ -1,0 +1,18 @@
+{
+  "name": "note-saver",
+  "version": "1.0.0",
+  "description": "**Note Saver** is a to-do list application built using HTML, CSS, Bootstrap, JavaScript, PHP, and MySQL. It allows users to add, edit, and delete notes. The app features a data table with pagination, ensuring easy navigation through tasks.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "grunt": "^1.6.1",
+    "grunt-contrib-cssmin": "^5.0.0",
+    "grunt-contrib-uglify": "^5.2.2",
+    "grunt-contrib-watch": "^1.1.0"
+  }
+}
